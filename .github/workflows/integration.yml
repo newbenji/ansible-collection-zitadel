@@ -2,7 +2,8 @@ name: Integration
 
 # Runs the modules against a real, throwaway ZITADEL (PostgreSQL + ZITADEL in
 # Docker). FirstInstance bootstraps an IAM_OWNER machine user and writes its
-# PAT and JSON key to disk, so both auth methods are exercised.
+# PAT and JSON key to disk, so both auth methods are exercised. Uses no
+# repository secrets, so it is safe to run on pull requests from forks.
 
 on:
   pull_request:
@@ -13,8 +14,7 @@ on:
     - cron: "37 5 * * 1"
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -23,7 +23,10 @@ concurrency:
 jobs:
   integration:
     name: Integration (ZITADEL ${{ matrix.zitadel }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -32,12 +35,14 @@ jobs:
     env:
       COLLECTION_PATH: ansible_collections/newbenji/zitadel
       BOOTSTRAP: ${{ github.workspace }}/bootstrap
+      ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:${{ matrix.zitadel }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: ${{ env.COLLECTION_PATH }}
+          persist-credentials: false
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
 
@@ -53,7 +58,7 @@ jobs:
             postgres:17-alpine
           until docker exec postgres pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
 
-          docker run -d --name zitadel --network zitadel -p 8080:8080 --user 0 \
+          docker run -d --name zitadel --network zitadel -p 127.0.0.1:8080:8080 --user 0 \
             -v "$BOOTSTRAP:/bootstrap" \
             -e ZITADEL_PORT=8080 \
             -e ZITADEL_EXTERNALDOMAIN=localhost \
@@ -68,7 +73,7 @@ jobs:
             -e ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINEKEY_TYPE=1 \
             -e ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINEKEY_EXPIRATIONDATE=2099-01-01T00:00:00Z \
             -e ZITADEL_FIRSTINSTANCE_MACHINEKEYPATH=/bootstrap/admin-key.json \
-            "ghcr.io/zitadel/zitadel:${{ matrix.zitadel }}" \
+            "$ZITADEL_IMAGE" \
             start-from-init --masterkey MasterkeyNeedsToHave32Characters
 
           for _ in $(seq 1 90); do

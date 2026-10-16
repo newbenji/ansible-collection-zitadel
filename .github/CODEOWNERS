@@ -1,2 +1,7 @@
 # The maintainer reviews every change.
 * @newbenji
+
+# Workflows, ownership and release metadata need extra care.
+/.github/ @newbenji
+/galaxy.yml @newbenji
+/meta/ @newbenji

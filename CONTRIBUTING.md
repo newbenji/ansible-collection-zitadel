@@ -48,6 +48,15 @@ start a throwaway ZITADEL with Docker that writes both files for you.
 - Mark secret options `no_log`. Never return a secret on a run that did not create it.
 - Add unit tests (with `fetch_url` faked) and an integration target.
 
+## GitHub Actions
+
+- Pin every action to a full commit SHA with the version as a comment
+  (`uses: owner/action@<sha> # v1.2.3`). The repository rejects unpinned actions.
+- Give each job only the `permissions` it needs; the workflow default is `{}`.
+- Never use `pull_request_target` or pass secrets to jobs that run fork code.
+- [zizmor](https://docs.zizmor.sh) checks the workflows in CI; run it locally with
+  `zizmor --persona=pedantic .github`.
+
 ## Pull requests
 
 1. Fork, create a branch, and make your change with tests.
