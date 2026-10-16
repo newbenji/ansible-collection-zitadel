@@ -1,0 +1,3 @@
+# Runs against a live ZITADEL started by .github/workflows/integration.yml
+# (variables come from tests/integration/integration_config.yml).
+unsupported

@@ -6,6 +6,20 @@ All notable changes to this collection are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0]
+
+### Added
+
+- `newbenji.zitadel.project` module: create, update and delete projects (v2 Project service),
+  with check and diff mode.
+- `newbenji.zitadel.oidc_app` module: create, update and delete OIDC applications, return the
+  client ID and (on creation) client secret, and rotate the secret with `regenerate_secret`.
+- `organization_id` documentation fragment; projects default to the caller's organization.
+
+### Changed
+
+- CI runs `ansible-test` directly and every GitHub Action is SHA-pinned and allow-listed.
+
 ## [0.1.0]
 
 ### Added

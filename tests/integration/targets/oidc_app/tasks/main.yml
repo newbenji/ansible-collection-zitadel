@@ -1,0 +1,204 @@
+---
+# Integration test for newbenji.zitadel.oidc_app against a live ZITADEL.
+# Expects zitadel_endpoint and zitadel_admin_token (integration_config.yml).
+#
+# A client secret is checked against the token endpoint with a dummy
+# authorization code: a valid secret passes client authentication and fails
+# with invalid_grant, a wrong one fails with invalid_client.
+- name: Run oidc_app integration tests
+  module_defaults:
+    group/newbenji.zitadel.zitadel:
+      endpoint: "{{ zitadel_endpoint }}"
+      api_token: "{{ zitadel_admin_token }}"
+  vars:
+    it_project_name: "ansible-it-oidc-{{ 999999 | random }}"
+    it_redirects:
+      - https://app.example.com/callback
+  block:
+    - name: Create a project for the app
+      newbenji.zitadel.project:
+        name: "{{ it_project_name }}"
+      register: project
+
+    # -- create --------------------------------------------------------------
+    - name: Create a web app (check mode)
+      newbenji.zitadel.oidc_app:
+        project_id: "{{ project.project_id }}"
+        name: web
+        redirect_uris: "{{ it_redirects }}"
+      check_mode: true
+      register: check_create
+
+    - name: Create a web app
+      newbenji.zitadel.oidc_app:
+        project_id: "{{ project.project_id }}"
+        name: web
+        redirect_uris: "{{ it_redirects }}"
+        grant_types: [authorization_code, refresh_token]
+      register: web
+
+    - name: Create the web app again (idempotent)
+      newbenji.zitadel.oidc_app:
+        project_id: "{{ project.project_id }}"
+        name: web
+        app_type: web
+        auth_method: basic
+        access_token_type: bearer
+        development_mode: false
+        clock_skew: 0
+        redirect_uris: "{{ it_redirects }}"
+        grant_types: [refresh_token, authorization_code]
+      register: web_again
+
+    - name: Authenticate with the client secret
+      ansible.builtin.uri:
+        url: "{{ zitadel_endpoint }}/oauth/v2/token"
+        method: POST
+        url_username: "{{ web.client_id }}"
+        url_password: "{{ web.client_secret }}"
+        force_basic_auth: true
+        body_format: form-urlencoded
+        body:
+          grant_type: authorization_code
+          code: not-a-real-code
+          redirect_uri: "{{ it_redirects[0] }}"
+        status_code: [400, 401]
+      register: secret_check
+
+    - name: Create a single-page app (public client)
+      newbenji.zitadel.oidc_app:
+        project_id: "{{ project.project_id }}"
+        name: spa
+        app_type: user_agent
+        redirect_uris: "{{ it_redirects }}"
+      register: spa
+
+    - name: Check create results
+      ansible.builtin.assert:
+        that:
+          - check_create is changed
+          - check_create.client_id is not defined
+          - web is changed
+          - web.client_id | length > 0
+          - web.client_secret | length > 0
+          - web_again is not changed
+          - web_again.client_id == web.client_id
+          - web_again.client_secret is not defined
+          - secret_check.json.error == 'invalid_grant'
+          - spa is changed
+          - spa.client_secret is not defined
+          - spa.app.authMethodType == 'OIDC_AUTH_METHOD_TYPE_NONE'
+
+    # -- update --------------------------------------------------------------
+    - name: Change redirect URIs and token type
+      newbenji.zitadel.oidc_app:
+        project_id: "{{ project.project_id }}"
+        name: web
+        redirect_uris: "{{ it_redirects + ['https://app2.example.com/callback'] }}"
+        access_token_type: jwt
+        access_token_role_assertion: true
+      diff: true
+      register: update
+
+    - name: Apply the same change again (idempotent)
+      newbenji.zitadel.oidc_app:
+        project_id: "{{ project.project_id }}"
+        name: web
+        redirect_uris: "{{ it_redirects + ['https://app2.example.com/callback'] }}"
+        access_token_type: jwt
+        access_token_role_assertion: true
+      register: update_again
+
+    - name: Read the app back from the API
+      ansible.builtin.uri:
+        url: "{{ zitadel_endpoint }}/zitadel.application.v2.ApplicationService/GetApplication"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ zitadel_admin_token }}"
+        body_format: json
+        body:
+          applicationId: "{{ web.application_id }}"
+      register: fetched
+
+    - name: Check update results
+      ansible.builtin.assert:
+        that:
+          - update is changed
+          - update.client_secret is not defined
+          - update.diff.after.accessTokenType == 'OIDC_TOKEN_TYPE_JWT'
+          - update_again is not changed
+          - fetched.json.application.oidcConfiguration.accessTokenType == 'OIDC_TOKEN_TYPE_JWT'
+          - fetched.json.application.oidcConfiguration.redirectUris | length == 2
+
+    # -- rotate secret -------------------------------------------------------
+    - name: Rotate the client secret
+      newbenji.zitadel.oidc_app:
+        project_id: "{{ project.project_id }}"
+        name: web
+        regenerate_secret: true
+      register: rotated
+
+    - name: Try the old secret
+      ansible.builtin.uri:
+        url: "{{ zitadel_endpoint }}/oauth/v2/token"
+        method: POST
+        url_username: "{{ web.client_id }}"
+        url_password: "{{ web.client_secret }}"
+        force_basic_auth: true
+        body_format: form-urlencoded
+        body:
+          grant_type: authorization_code
+          code: not-a-real-code
+          redirect_uri: "{{ it_redirects[0] }}"
+        status_code: [400, 401]
+      register: old_secret_check
+
+    - name: Try the new secret
+      ansible.builtin.uri:
+        url: "{{ zitadel_endpoint }}/oauth/v2/token"
+        method: POST
+        url_username: "{{ web.client_id }}"
+        url_password: "{{ rotated.client_secret }}"
+        force_basic_auth: true
+        body_format: form-urlencoded
+        body:
+          grant_type: authorization_code
+          code: not-a-real-code
+          redirect_uri: "{{ it_redirects[0] }}"
+        status_code: [400, 401]
+      register: new_secret_check
+
+    - name: Check rotation results
+      ansible.builtin.assert:
+        that:
+          - rotated is changed
+          - rotated.client_secret != web.client_secret
+          - old_secret_check.json.error == 'invalid_client'
+          - new_secret_check.json.error == 'invalid_grant'
+
+    # -- delete --------------------------------------------------------------
+    - name: Delete the web app
+      newbenji.zitadel.oidc_app:
+        project_id: "{{ project.project_id }}"
+        name: web
+        state: absent
+      register: delete
+
+    - name: Delete the web app again (idempotent)
+      newbenji.zitadel.oidc_app:
+        project_id: "{{ project.project_id }}"
+        name: web
+        state: absent
+      register: delete_again
+
+    - name: Check delete results
+      ansible.builtin.assert:
+        that:
+          - delete is changed
+          - delete_again is not changed
+
+  always:
+    - name: Clean up the project and its apps
+      newbenji.zitadel.project:
+        name: "{{ it_project_name }}"
+        state: absent

@@ -1,0 +1,102 @@
+---
+# Integration test for newbenji.zitadel.project against a live ZITADEL.
+# Expects zitadel_endpoint and zitadel_admin_token (integration_config.yml).
+- name: Run project integration tests
+  module_defaults:
+    group/newbenji.zitadel.zitadel:
+      endpoint: "{{ zitadel_endpoint }}"
+      api_token: "{{ zitadel_admin_token }}"
+  vars:
+    it_project_name: "ansible-it-project-{{ 999999 | random }}"
+  block:
+    - name: Create a project (check mode)
+      newbenji.zitadel.project:
+        name: "{{ it_project_name }}"
+      check_mode: true
+      register: check_create
+
+    - name: Create a project
+      newbenji.zitadel.project:
+        name: "{{ it_project_name }}"
+        project_role_assertion: true
+      register: create
+
+    - name: Create the project again (idempotent)
+      newbenji.zitadel.project:
+        name: "{{ it_project_name }}"
+        project_role_assertion: true
+        authorization_required: false
+        private_labeling_setting: unspecified
+      register: create_again
+
+    - name: Change a setting
+      newbenji.zitadel.project:
+        name: "{{ it_project_name }}"
+        authorization_required: true
+      diff: true
+      register: update
+
+    - name: Change the setting again (idempotent)
+      newbenji.zitadel.project:
+        name: "{{ it_project_name }}"
+        authorization_required: true
+      register: update_again
+
+    - name: Read the project back from the API
+      ansible.builtin.uri:
+        url: "{{ zitadel_endpoint }}/zitadel.project.v2.ProjectService/GetProject"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ zitadel_admin_token }}"
+        body_format: json
+        body:
+          projectId: "{{ create.project_id }}"
+      register: fetched
+
+    - name: Check present results
+      ansible.builtin.assert:
+        that:
+          - check_create is changed
+          - check_create.project_id is not defined
+          - create is changed
+          - create.project_id | length > 0
+          - create_again is not changed
+          - create_again.project_id == create.project_id
+          - update is changed
+          - update.diff.after == {'authorizationRequired': true}
+          - update_again is not changed
+          - fetched.json.project.name == it_project_name
+          - fetched.json.project.projectRoleAssertion
+          - fetched.json.project.authorizationRequired
+
+    - name: Delete the project (check mode)
+      newbenji.zitadel.project:
+        name: "{{ it_project_name }}"
+        state: absent
+      check_mode: true
+      register: check_delete
+
+    - name: Delete the project
+      newbenji.zitadel.project:
+        name: "{{ it_project_name }}"
+        state: absent
+      register: delete
+
+    - name: Delete the project again (idempotent)
+      newbenji.zitadel.project:
+        name: "{{ it_project_name }}"
+        state: absent
+      register: delete_again
+
+    - name: Check absent results
+      ansible.builtin.assert:
+        that:
+          - check_delete is changed
+          - delete is changed
+          - delete_again is not changed
+
+  always:
+    - name: Clean up the project
+      newbenji.zitadel.project:
+        name: "{{ it_project_name }}"
+        state: absent

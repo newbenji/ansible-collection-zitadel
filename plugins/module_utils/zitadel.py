@@ -184,17 +184,63 @@ class ZitadelClient(object):
             self.authenticate()
         return self._call(method, path, payload=payload, headers={'Authorization': self._auth})
 
-    def search(self, path, payload):
-        """POST a v2 search endpoint, following offset pagination; returns all results."""
+    def rpc(self, service, method, payload=None):
+        """Call a v2 Connect RPC (e.g. zitadel.project.v2.ProjectService/CreateProject) with JSON."""
+        if self._auth is None:
+            self.authenticate()
+        return self._call('POST', '/%s/%s' % (service, method), payload=payload or {},
+                          headers={'Authorization': self._auth, 'Connect-Protocol-Version': '1'})
+
+    def search(self, path, payload, result_key='result', service=None):
+        """Call a v2 list endpoint, following offset pagination; returns all results.
+
+        With ``service`` set, ``path`` is the RPC method name and the call goes
+        through :meth:`rpc`; otherwise ``path`` is a REST path.
+        """
         results = []
         offset = 0
         while True:
             body = dict(payload)
             body['pagination'] = {'offset': offset, 'limit': PAGE_SIZE, 'asc': True}
-            page = self.request('POST', path, payload=body)
-            batch = page.get('result') or []
+            if service:
+                page = self.rpc(service, path, body)
+            else:
+                page = self.request('POST', path, payload=body)
+            batch = page.get(result_key) or []
             results.extend(batch)
             total = int((page.get('pagination') or {}).get('totalResult') or 0)
             offset += len(batch)
             if not batch or offset >= total:
                 return results
+
+    def own_organization_id(self):
+        """ID of the organization the authenticated user belongs to."""
+        me = self.request('GET', '/auth/v1/users/me')
+        org_id = ((me.get('user') or {}).get('details') or {}).get('resourceOwner')
+        if not org_id:
+            self._fail("Could not determine the organization of the authenticated user; set organization_id")
+        return org_id
+
+
+def enum_value(value, names):
+    """Normalize a protojson enum (name, number or omitted default) to its name."""
+    if value is None:
+        return names[0]
+    if isinstance(value, int):
+        return names[value] if 0 <= value < len(names) else value
+    return value
+
+
+def compare_fields(current, desired):
+    """Return (before, after) dicts for keys of ``desired`` whose value differs from ``current``."""
+    before, after = {}, {}
+    for key, want in desired.items():
+        have = current.get(key)
+        if isinstance(want, list):
+            same = sorted(have or []) == sorted(want)
+        else:
+            same = have == want
+        if not same:
+            before[key] = have
+            after[key] = want
+    return before, after
