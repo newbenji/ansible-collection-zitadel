@@ -66,7 +66,8 @@
           - create_again is not changed
           - create_again.project_id == create.project_id
           - update is changed
-          - update.diff.after == {'authorizationRequired': true}
+          - update.diff.after.authorizationRequired
+          - update.diff.after | length == 1
           - update_again is not changed
           - fetched.json.project.name == it_project_name
           - fetched.json.project.projectRoleAssertion
