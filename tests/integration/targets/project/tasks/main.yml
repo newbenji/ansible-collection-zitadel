@@ -6,9 +6,12 @@
     group/newbenji.zitadel.zitadel:
       endpoint: "{{ zitadel_endpoint }}"
       api_token: "{{ zitadel_admin_token }}"
-  vars:
-    it_project_name: "ansible-it-project-{{ 999999 | random }}"
   block:
+    # set_fact pins the value; a var using `random` is re-evaluated on every use.
+    - name: Pick a unique project name
+      ansible.builtin.set_fact:
+        it_project_name: "ansible-it-project-{{ 999999 | random }}"
+
     - name: Create a project (check mode)
       newbenji.zitadel.project:
         name: "{{ it_project_name }}"
@@ -97,6 +100,7 @@
 
   always:
     - name: Clean up the project
+      when: it_project_name is defined
       newbenji.zitadel.project:
         name: "{{ it_project_name }}"
         state: absent

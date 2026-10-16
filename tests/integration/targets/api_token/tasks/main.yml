@@ -45,6 +45,7 @@
         user_id: "{{ it_user_id }}"
         expiration_date: "2099-01-01T00:00:00Z"
       register: create
+      no_log: true  # holds the new token; CI logs are public
 
     - name: Verify the new token authenticates as the machine user
       ansible.builtin.uri:

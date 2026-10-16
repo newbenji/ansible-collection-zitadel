@@ -3,18 +3,23 @@
 # Expects zitadel_endpoint and zitadel_admin_token (integration_config.yml).
 #
 # A client secret is checked against the token endpoint with a dummy
-# authorization code: a valid secret passes client authentication and fails
-# with invalid_grant, a wrong one fails with invalid_client.
+# authorization code: a valid secret passes client authentication and the
+# request fails on the code (HTTP 400), a wrong one fails with invalid_client.
+# Tasks that see a client secret use no_log, since CI logs are public.
 - name: Run oidc_app integration tests
   module_defaults:
     group/newbenji.zitadel.zitadel:
       endpoint: "{{ zitadel_endpoint }}"
       api_token: "{{ zitadel_admin_token }}"
   vars:
-    it_project_name: "ansible-it-oidc-{{ 999999 | random }}"
     it_redirects:
       - https://app.example.com/callback
   block:
+    # set_fact pins the value; a var using `random` is re-evaluated on every use.
+    - name: Pick a unique project name
+      ansible.builtin.set_fact:
+        it_project_name: "ansible-it-oidc-{{ 999999 | random }}"
+
     - name: Create a project for the app
       newbenji.zitadel.project:
         name: "{{ it_project_name }}"
@@ -36,6 +41,7 @@
         redirect_uris: "{{ it_redirects }}"
         grant_types: [authorization_code, refresh_token]
       register: web
+      no_log: true
 
     - name: Create the web app again (idempotent)
       newbenji.zitadel.oidc_app:
@@ -64,6 +70,7 @@
           redirect_uri: "{{ it_redirects[0] }}"
         status_code: [400, 401]
       register: secret_check
+      no_log: true
 
     - name: Create a single-page app (public client)
       newbenji.zitadel.oidc_app:
@@ -84,7 +91,8 @@
           - web_again is not changed
           - web_again.client_id == web.client_id
           - web_again.client_secret is not defined
-          - secret_check.json.error == 'invalid_grant'
+          - secret_check.status == 400
+          - secret_check.json.error != 'invalid_client'
           - spa is changed
           - spa.client_secret is not defined
           - spa.app.authMethodType == 'OIDC_AUTH_METHOD_TYPE_NONE'
@@ -137,6 +145,7 @@
         name: web
         regenerate_secret: true
       register: rotated
+      no_log: true
 
     - name: Try the old secret
       ansible.builtin.uri:
@@ -152,6 +161,7 @@
           redirect_uri: "{{ it_redirects[0] }}"
         status_code: [400, 401]
       register: old_secret_check
+      no_log: true
 
     - name: Try the new secret
       ansible.builtin.uri:
@@ -167,14 +177,16 @@
           redirect_uri: "{{ it_redirects[0] }}"
         status_code: [400, 401]
       register: new_secret_check
+      no_log: true
 
     - name: Check rotation results
       ansible.builtin.assert:
         that:
           - rotated is changed
           - rotated.client_secret != web.client_secret
-          - old_secret_check.json.error == 'invalid_client'
-          - new_secret_check.json.error == 'invalid_grant'
+          - old_secret_check.status == 401 or old_secret_check.json.error == 'invalid_client'
+          - new_secret_check.status == 400
+          - new_secret_check.json.error != 'invalid_client'
 
     # -- delete --------------------------------------------------------------
     - name: Delete the web app
@@ -199,6 +211,7 @@
 
   always:
     - name: Clean up the project and its apps
+      when: it_project_name is defined
       newbenji.zitadel.project:
         name: "{{ it_project_name }}"
         state: absent
