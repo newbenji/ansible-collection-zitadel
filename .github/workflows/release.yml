@@ -1,24 +1,39 @@
 name: Release
 
 # Push a tag like v0.2.0 (matching galaxy.yml's version) to build the collection,
-# attach it to a GitHub release and, if the GALAXY_API_KEY secret is set,
-# publish it to Ansible Galaxy.
+# attach it to a GitHub release and, if the `galaxy` environment holds a
+# GALAXY_API_KEY secret, publish it to Ansible Galaxy.
+#
+# Only repository admins can create v* tags (tag ruleset), and the `galaxy`
+# environment only accepts deployments from v* tags.
 
 on:
   push:
     tags:
       - "v*"
 
-permissions:
-  contents: write
+permissions: {}
+
+# Never run two releases at once; let a running one finish.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
 
@@ -26,25 +41,68 @@ jobs:
         run: python -m pip install ansible-core
 
       - name: Check tag matches galaxy.yml version
+        id: version
         run: |
           VERSION="$(python -c 'import yaml; print(yaml.safe_load(open("galaxy.yml"))["version"])')"
           if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
             echo "Tag $GITHUB_REF_NAME does not match galaxy.yml version $VERSION" >&2
             exit 1
           fi
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build collection
         run: ansible-galaxy collection build
 
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v3
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          files: newbenji-zitadel-${{ env.VERSION }}.tar.gz
-          generate_release_notes: true
+          name: collection
+          path: newbenji-zitadel-${{ steps.version.outputs.version }}.tar.gz
+          if-no-files-found: error
 
-      - name: Publish to Ansible Galaxy
+  github-release:
+    name: GitHub release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the GitHub release and upload the tarball
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: collection
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "newbenji-zitadel-${VERSION}.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+
+  galaxy:
+    name: Publish to Ansible Galaxy
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: galaxy
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: collection
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Publish
         env:
           GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
-        if: env.GALAXY_API_KEY != ''
-        run: ansible-galaxy collection publish "newbenji-zitadel-${VERSION}.tar.gz" --api-key "$GALAXY_API_KEY"
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          if [ -z "$GALAXY_API_KEY" ]; then
+            echo "::notice::GALAXY_API_KEY is not set in the galaxy environment; skipping publish."
+            exit 0
+          fi
+          python -m pip install ansible-core
+          ansible-galaxy collection publish "newbenji-zitadel-${VERSION}.tar.gz" --api-key "$GALAXY_API_KEY"

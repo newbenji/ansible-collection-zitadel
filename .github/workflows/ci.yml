@@ -10,8 +10,8 @@ on:
     - cron: "17 5 * * 1"
   workflow_dispatch:
 
-permissions:
-  contents: read
+# No default token permissions; each job asks for what it needs.
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,7 +20,10 @@ concurrency:
 jobs:
   sanity:
     name: Sanity (ansible-core ${{ matrix.ansible }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -32,14 +35,17 @@ jobs:
           - devel
     continue-on-error: ${{ matrix.ansible == 'devel' }}
     steps:
-      - uses: ansible-community/ansible-test-gh-action@release/v1
+      - uses: ansible-community/ansible-test-gh-action@6ded727edb598e670ac056a8e680ca4050bac0a3 # v1.18.0
         with:
           ansible-core-version: ${{ matrix.ansible }}
           testing-type: sanity
 
   units:
     name: Units (ansible-core ${{ matrix.ansible }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -51,14 +57,35 @@ jobs:
           - devel
     continue-on-error: ${{ matrix.ansible == 'devel' }}
     steps:
-      - uses: ansible-community/ansible-test-gh-action@release/v1
+      - uses: ansible-community/ansible-test-gh-action@6ded727edb598e670ac056a8e680ca4050bac0a3 # v1.18.0
         with:
           ansible-core-version: ${{ matrix.ansible }}
           testing-type: units
 
   lint:
     name: ansible-lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: ansible/ansible-lint@v26.10.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ansible/ansible-lint@9bce2bfb8f4a984e6b13767bc0d6bf0a49492164 # v26.10.1
+
+  workflow-security:
+    name: zizmor (workflow security)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          # Fail the job on findings instead of uploading to code scanning,
+          # so it also works on pull requests from forks.
+          advanced-security: false
