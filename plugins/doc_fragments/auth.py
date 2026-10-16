@@ -47,3 +47,12 @@ options:
 requirements:
   - cryptography (only for O(service_account_key))
 '''
+
+    ORGANIZATION = r'''
+options:
+  organization_id:
+    description:
+      - ID of the organization that owns the resource.
+      - Defaults to the organization of the authenticated user.
+    type: str
+'''

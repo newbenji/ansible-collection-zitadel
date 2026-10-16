@@ -3,3 +3,5 @@ requires_ansible: ">=2.19.0"
 action_groups:
   zitadel:
     - api_token
+    - oidc_app
+    - project

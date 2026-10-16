@@ -15,14 +15,16 @@ management instance through its REST API.
 | Module | Description |
 |---|---|
 | [`newbenji.zitadel.api_token`](plugins/modules/api_token.py) | Create or remove personal access tokens (PATs) of a machine user |
+| [`newbenji.zitadel.project`](plugins/modules/project.py) | Create, update or delete projects |
+| [`newbenji.zitadel.oidc_app`](plugins/modules/oidc_app.py) | Create, update or delete OIDC applications (OAuth2 clients) and rotate their secrets |
 
-Planned: organizations, projects, users and roles. Contributions welcome. See
+Planned: organizations, users, roles and API applications. Contributions welcome. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Requirements
 
 - ansible-core 2.19 or newer
-- ZITADEL v4 (tested with v4.16.0). The modules use the v2 REST API.
+- ZITADEL v4 (tested with v4.16.0). The modules use the v2 APIs (REST and Connect JSON).
 - Python `cryptography` on the host that runs the modules, only for
   `service_account_key` authentication. ansible-core already depends on it.
 
@@ -74,9 +76,51 @@ Set the options once for a whole play with the `newbenji.zitadel.zitadel` module
         token_path: "{{ playbook_dir }}/.secrets/ci.pat"
 ```
 
+## Example: an OIDC client for an app on Kubernetes
+
+Create a project and a client, and put the credentials in a Kubernetes Secret
+the app reads. The client secret is only returned when the client is created
+(or rotated), so the Secret is only written then:
+
+```yaml
+- hosts: localhost
+  module_defaults:
+    group/newbenji.zitadel.zitadel:
+      endpoint: https://zitadel.example.com
+      api_token: "{{ vault_zitadel_admin_token }}"
+  tasks:
+    - name: Ensure the homelab project
+      newbenji.zitadel.project:
+        name: homelab
+      register: project
+
+    - name: Ensure the Grafana client
+      newbenji.zitadel.oidc_app:
+        project_id: "{{ project.project_id }}"
+        name: grafana
+        redirect_uris: [https://grafana.example.com/login/generic_oauth]
+        grant_types: [authorization_code, refresh_token]
+      register: grafana
+      no_log: true
+
+    - name: Store the credentials for Grafana
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata: { name: grafana-oidc, namespace: monitoring }
+          stringData:
+            client-id: "{{ grafana.client_id }}"
+            client-secret: "{{ grafana.client_secret }}"
+      when: grafana.client_secret is defined
+      no_log: true
+```
+
+If the Secret is lost, rotate with `regenerate_secret: true` on the next run.
+
 ## Handling secrets
 
-ZITADEL returns a token's secret **only once**, when it is created. Either:
+ZITADEL returns PATs and client secrets **only once**, when they are created. For `api_token`, either:
 
 - set `token_path` so the module writes it to a `0600` file (and never returns it), or
 - `register` the result and put `no_log: true` on the task.
