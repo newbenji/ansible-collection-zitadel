@@ -1,0 +1,9 @@
+---
+profile: production
+exclude_paths:
+  - tests/output/
+warn_list: []
+skip_list:
+  # ansible-lint does not see module_defaults or the ZITADEL_* env fallbacks,
+  # so it wrongly reports `endpoint` as missing.
+  - args[module]

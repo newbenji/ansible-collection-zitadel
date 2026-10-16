@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    # Weekly, to catch breakage from new ansible-core releases.
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanity:
+    name: Sanity (ansible-core ${{ matrix.ansible }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ansible:
+          - stable-2.19
+          - stable-2.20
+          - stable-2.21
+          - stable-2.22
+          - devel
+    continue-on-error: ${{ matrix.ansible == 'devel' }}
+    steps:
+      - uses: ansible-community/ansible-test-gh-action@release/v1
+        with:
+          ansible-core-version: ${{ matrix.ansible }}
+          testing-type: sanity
+
+  units:
+    name: Units (ansible-core ${{ matrix.ansible }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ansible:
+          - stable-2.19
+          - stable-2.20
+          - stable-2.21
+          - stable-2.22
+          - devel
+    continue-on-error: ${{ matrix.ansible == 'devel' }}
+    steps:
+      - uses: ansible-community/ansible-test-gh-action@release/v1
+        with:
+          ansible-core-version: ${{ matrix.ansible }}
+          testing-type: units
+
+  lint:
+    name: ansible-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ansible/ansible-lint@v26.10.1

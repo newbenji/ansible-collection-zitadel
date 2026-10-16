@@ -1,0 +1,42 @@
+name: Bug report
+description: Something in the collection does not work as documented.
+labels:
+  - bug
+body:
+  - type: input
+    id: module
+    attributes:
+      label: Module
+      placeholder: newbenji.zitadel.api_token
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Collection, ansible-core and ZITADEL versions.
+      placeholder: "collection 0.1.0, ansible-core 2.21.5, ZITADEL v4.16.0"
+    validations:
+      required: true
+  - type: textarea
+    id: task
+    attributes:
+      label: Task / playbook
+      description: The task that fails. Remove tokens, keys and other secrets.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include the output with -vvv. Remove secrets.
+      render: text
+    validations:
+      required: true

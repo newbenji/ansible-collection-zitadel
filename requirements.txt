@@ -1,0 +1,4 @@
+# Python requirements on the host that runs the modules (usually the controller).
+# Only needed for service_account_key authentication; ansible-core already
+# depends on it, so most installs have it.
+cryptography>=3.4

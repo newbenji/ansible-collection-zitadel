@@ -1,0 +1,18 @@
+name: Feature request
+description: Suggest a new module, option or improvement.
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to automate?
+      description: The ZITADEL resource or workflow, and what you do manually today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Module name, options, example task — whatever you have in mind.
+      render: yaml

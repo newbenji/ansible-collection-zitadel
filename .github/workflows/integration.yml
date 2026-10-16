@@ -1,0 +1,101 @@
+name: Integration
+
+# Runs the modules against a real, throwaway ZITADEL (PostgreSQL + ZITADEL in
+# Docker). FirstInstance bootstraps an IAM_OWNER machine user and writes its
+# PAT and JSON key to disk, so both auth methods are exercised.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "37 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Integration (ZITADEL ${{ matrix.zitadel }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        zitadel:
+          - v4.16.0
+    env:
+      COLLECTION_PATH: ansible_collections/newbenji/zitadel
+      BOOTSTRAP: ${{ github.workspace }}/bootstrap
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: ${{ env.COLLECTION_PATH }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install ansible-core
+        run: python -m pip install ansible-core cryptography
+
+      - name: Start PostgreSQL and ZITADEL
+        run: |
+          mkdir -p "$BOOTSTRAP" && chmod 777 "$BOOTSTRAP"
+          docker network create zitadel
+          docker run -d --name postgres --network zitadel \
+            -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=zitadel \
+            postgres:17-alpine
+          until docker exec postgres pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
+
+          docker run -d --name zitadel --network zitadel -p 8080:8080 --user 0 \
+            -v "$BOOTSTRAP:/bootstrap" \
+            -e ZITADEL_PORT=8080 \
+            -e ZITADEL_EXTERNALDOMAIN=localhost \
+            -e ZITADEL_EXTERNALPORT=8080 \
+            -e ZITADEL_EXTERNALSECURE=false \
+            -e ZITADEL_TLS_ENABLED=false \
+            -e "ZITADEL_DATABASE_POSTGRES_DSN=postgresql://postgres:postgres@postgres:5432/zitadel?sslmode=disable" \
+            -e ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME=ansible-admin \
+            -e ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME=ansible-admin \
+            -e ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE=2099-01-01T00:00:00Z \
+            -e ZITADEL_FIRSTINSTANCE_PATPATH=/bootstrap/admin.pat \
+            -e ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINEKEY_TYPE=1 \
+            -e ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINEKEY_EXPIRATIONDATE=2099-01-01T00:00:00Z \
+            -e ZITADEL_FIRSTINSTANCE_MACHINEKEYPATH=/bootstrap/admin-key.json \
+            "ghcr.io/zitadel/zitadel:${{ matrix.zitadel }}" \
+            start-from-init --masterkey MasterkeyNeedsToHave32Characters
+
+          for _ in $(seq 1 90); do
+            if curl -fsS http://localhost:8080/debug/ready >/dev/null 2>&1 \
+               && [ -s "$BOOTSTRAP/admin.pat" ] && [ -s "$BOOTSTRAP/admin-key.json" ]; then
+              echo "ZITADEL is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ZITADEL did not become ready" >&2
+          exit 1
+
+      - name: Write integration_config.yml
+        run: |
+          PAT="$(tr -d '\n' < "$BOOTSTRAP/admin.pat")"
+          echo "::add-mask::$PAT"
+          cat > "$COLLECTION_PATH/tests/integration/integration_config.yml" <<EOF
+          zitadel_endpoint: http://localhost:8080
+          zitadel_admin_token: "$PAT"
+          zitadel_admin_key_file: "$BOOTSTRAP/admin-key.json"
+          EOF
+
+      - name: Run integration tests
+        working-directory: ${{ env.COLLECTION_PATH }}
+        run: ansible-test integration --local --allow-unsupported --color -v
+
+      - name: ZITADEL logs
+        if: failure()
+        run: docker logs zitadel 2>&1 | tail -200

@@ -1,0 +1,29 @@
+---
+namespace: newbenji
+name: zitadel
+version: 0.1.0
+readme: README.md
+authors:
+  - Benjamin Andersen (@newbenji)
+description: Manage ZITADEL identity and access management resources with Ansible.
+license:
+  - GPL-3.0-or-later
+tags:
+  - zitadel
+  - iam
+  - identity
+  - oidc
+  - security
+dependencies: {}
+repository: https://github.com/newbenji/ansible-collection-zitadel
+documentation: https://github.com/newbenji/ansible-collection-zitadel#readme
+homepage: https://github.com/newbenji/ansible-collection-zitadel
+issues: https://github.com/newbenji/ansible-collection-zitadel/issues
+build_ignore:
+  - .github
+  - .gitignore
+  - .ansible
+  - .ansible-lint
+  - "*.tar.gz"
+  - tests/output
+  - tests/integration/integration_config.yml

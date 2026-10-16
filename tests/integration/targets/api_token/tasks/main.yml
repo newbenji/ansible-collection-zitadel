@@ -1,0 +1,121 @@
+---
+# Integration test for newbenji.zitadel.api_token against a live ZITADEL.
+# Expects (via tests/integration/integration_config.yml):
+#   zitadel_endpoint, zitadel_admin_token, zitadel_admin_key_file
+- name: Run api_token integration tests
+  module_defaults:
+    group/newbenji.zitadel.zitadel:
+      endpoint: "{{ zitadel_endpoint }}"
+      api_token: "{{ zitadel_admin_token }}"
+  block:
+    - name: Look up the admin's organization
+      ansible.builtin.uri:
+        url: "{{ zitadel_endpoint }}/auth/v1/users/me"
+        headers:
+          Authorization: "Bearer {{ zitadel_admin_token }}"
+      register: admin_me
+
+    - name: Create a throwaway machine user
+      ansible.builtin.uri:
+        url: "{{ zitadel_endpoint }}/v2/users/new"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ zitadel_admin_token }}"
+        body_format: json
+        body:
+          organizationId: "{{ admin_me.json.user.details.resourceOwner }}"
+          username: "ansible-it-{{ 999999 | random }}"
+          machine:
+            name: ansible integration test
+      register: machine_user
+
+    - name: Remember the machine user ID
+      ansible.builtin.set_fact:
+        it_user_id: "{{ machine_user.json.id }}"
+
+    # -- state=present -------------------------------------------------------
+    - name: Create a token (check mode)
+      newbenji.zitadel.api_token:
+        user_id: "{{ it_user_id }}"
+      check_mode: true
+      register: check_create
+
+    - name: Create a token
+      newbenji.zitadel.api_token:
+        user_id: "{{ it_user_id }}"
+        expiration_date: "2099-01-01T00:00:00Z"
+      register: create
+
+    - name: Verify the new token authenticates as the machine user
+      ansible.builtin.uri:
+        url: "{{ zitadel_endpoint }}/auth/v1/users/me"
+        headers:
+          Authorization: "Bearer {{ create.token }}"
+      register: new_token_me
+
+    - name: Create a token again (idempotent)
+      newbenji.zitadel.api_token:
+        user_id: "{{ it_user_id }}"
+        expiration_date: "2099-01-01T00:00:00Z"
+      register: create_again
+
+    - name: Create a token again using service-account key auth (idempotent)
+      newbenji.zitadel.api_token:
+        api_token: "{{ omit }}"
+        service_account_key: "{{ lookup('ansible.builtin.file', zitadel_admin_key_file) }}"
+        user_id: "{{ it_user_id }}"
+      register: create_with_key
+
+    - name: Check present results
+      ansible.builtin.assert:
+        that:
+          - check_create is changed
+          - create is changed
+          - create.token | length > 0
+          - create.token_id | length > 0
+          - new_token_me.json.user.id == it_user_id
+          - create_again is not changed
+          - create_again.token_id == create.token_id
+          - create_again.token is not defined
+          - create_with_key is not changed
+          - create_with_key.token_id == create.token_id
+
+    # -- state=absent --------------------------------------------------------
+    - name: Remove the token (check mode)
+      newbenji.zitadel.api_token:
+        user_id: "{{ it_user_id }}"
+        token_id: "{{ create.token_id }}"
+        state: absent
+      check_mode: true
+      register: check_remove
+
+    - name: Remove the token
+      newbenji.zitadel.api_token:
+        user_id: "{{ it_user_id }}"
+        token_id: "{{ create.token_id }}"
+        state: absent
+      register: remove
+
+    - name: Remove the token again (idempotent)
+      newbenji.zitadel.api_token:
+        user_id: "{{ it_user_id }}"
+        state: absent
+      register: remove_again
+
+    - name: Check absent results
+      ansible.builtin.assert:
+        that:
+          - check_remove is changed
+          - remove is changed
+          - remove.removed == [create.token_id]
+          - remove_again is not changed
+          - remove_again.removed == []
+
+  always:
+    - name: Delete the throwaway machine user
+      ansible.builtin.uri:
+        url: "{{ zitadel_endpoint }}/v2/users/{{ it_user_id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ zitadel_admin_token }}"
+      when: it_user_id is defined
